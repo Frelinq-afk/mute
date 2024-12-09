@@ -1,0 +1,89 @@
+import telebot
+import logging
+import json
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Замените 'YOUR_TOKEN' на токен вашего бота
+API_TOKEN = ''
+bot = telebot.TeleBot(API_TOKEN)
+
+USER_DATA_FILE = "user_data.json"
+
+def load_user_data():
+    """Загружает данные о пользователях из файла."""
+    try:
+        with open(USER_DATA_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_user_data(user_data):
+    """Сохраняет данные о пользователях в файл."""
+    with open(USER_DATA_FILE, 'w') as f:
+        json.dump(user_data, f, indent=4)
+
+def get_user_id_by_username(username, chat_id):
+    """Получает ID пользователя по его username из сохраненных данных."""
+    username = username.lstrip('@')
+    logger.info(f"Получаем user_id для username: {username}, chat_id: {chat_id}")
+
+    user_data = load_user_data()
+    chat_str_id = str(chat_id)
+
+    if chat_str_id in user_data and username in user_data[chat_str_id]:
+        user_id = user_data[chat_str_id][username]
+        logger.info(f"Пользователь найден: {user_id}")
+        return user_id
+    else:
+        logger.warning(f"Пользователь {username} не найден в сохраненных данных.")
+        return None
+
+@bot.message_handler(func=lambda message: True)
+def save_user_info(message):
+    """Сохраняет user_id пользователя при любом сообщении."""
+    user_id = message.from_user.id
+    username = message.from_user.username
+    chat_id = message.chat.id
+
+    if username:  # Сохраняем только если есть username
+        user_data = load_user_data()
+        chat_str_id = str(chat_id)
+        if chat_str_id not in user_data:
+            user_data[chat_str_id] = {}
+        user_data[chat_str_id][username] = user_id
+        save_user_data(user_data)
+
+def mute_user(chat_id, user_id):
+    """Замучивает пользователя в чате."""
+    try:
+        bot.restrict_chat_member(chat_id, user_id, permissions=telebot.types.ChatPermissions(can_send_messages=False))
+        logger.info(f'Пользователь {user_id} замучен в чате {chat_id}.')
+    except telebot.apihelper.ApiException as e:
+        logger.error(f'Ошибка при замучивании пользователя: {str(e)}')
+
+@bot.message_handler(commands=['mute_user'])
+def mute_user_command(message):
+    """Обрабатывает команду /mute_user и замучивает пользователя по username."""
+    if not message.chat.type.endswith('group') and not message.chat.type.endswith('supergroup'):
+        bot.reply_to(message, "Команда работает только в группах.")
+        return
+
+    if len(message.text.split()) > 1:
+        username = message.text.split()[1]
+        chat_id = message.chat.id
+        user_id = get_user_id_by_username(username, chat_id)
+
+        if user_id:
+            mute_user(chat_id, user_id)
+            bot.reply_to(message, f'Пользователь {username} замучен.')
+        else:
+            bot.reply_to(message, f'Не удалось получить User ID для {username}. Возможно, пользователь еще не писал в чат или у него нет username.')
+    else:
+        bot.reply_to(message, 'Пожалуйста, укажите username пользователя.')
+
+# Запуск бота
+if __name__ == '__main__':
+    bot.polling(none_stop=True)
